@@ -34,12 +34,12 @@ class AutopilotDataset(torch.utils.data.Dataset):
 
         with open(directory + "annotations.csv", 'r') as annotations:
             for line in annotations:
-                name, steering, throttle = line.split(",")
+                name, left, right = line.split(",")
                 image = directory+name+'.jpg'
                 if os.path.isfile(image) and os.stat(image).st_size > 0:
                     if self.keep_images_in_ram:
                         image = self.load_and_prepare_image_from_path(image)
-                    self.data.append((name, image, steering, throttle))
+                    self.data.append((name, image, left, right))
                     
             annotations.close()
         print("Generated dataset of " + str(len(self.data)) + " items")
@@ -50,12 +50,12 @@ class AutopilotDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         item = self.data[idx]
         
-        name, image, steering, throttle = item
+        name, image, left, right = item
         if not self.keep_images_in_ram:
             image = self.load_and_prepare_image_from_path(image)
         
-        steering = float(steering)
-        throttle = float(throttle)
+        left = float(right)
+        left = float(right)
         
         if self.random_blur and float(np.random.random(1)) > 0.5:
             image = image.filter(ImageFilter.BLUR)
@@ -77,7 +77,7 @@ class AutopilotDataset(torch.utils.data.Dataset):
         
         if self.random_horizontal_flip and float(np.random.random(1)) > 0.5:
             image = image.transpose(PIL.Image.FLIP_LEFT_RIGHT)
-            steering = -steering
+            steering = -steering # this is not used because of left and right sign
             
         transforms = []
         if self.random_color_jitter:
@@ -90,7 +90,7 @@ class AutopilotDataset(torch.utils.data.Dataset):
         composed_transforms = torchvision.transforms.Compose(transforms)
         image = composed_transforms(image)
         
-        return name, image, torch.Tensor([steering, throttle])
+        return name, image, torch.Tensor([left, right])
 
     def load_and_prepare_image_from_path(self, path):
         image = cv2.imread(path, cv2.IMREAD_COLOR)
