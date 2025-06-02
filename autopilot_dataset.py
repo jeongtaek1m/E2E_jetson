@@ -23,7 +23,7 @@ class AutopilotDataset(torch.utils.data.Dataset):
         super(AutopilotDataset, self).__init__()
         
         self.frame_size = frame_size
-        self.transform = transform
+        # self.transform = transform
         self.random_noise = random_noise
         self.random_blur = random_blur
         self.random_horizontal_flip = random_horizontal_flip
@@ -32,10 +32,13 @@ class AutopilotDataset(torch.utils.data.Dataset):
         
         self.data = []
 
-        with open(directory + "annotations.csv", 'r') as annotations:
+        with open(directory / "annotations.csv", 'r') as annotations:
+            # print(directory)
             for line in annotations:
-                name, left, right = line.split(",")
-                image = directory+name+'.jpg'
+                name, left, right = [field.strip() for field in line.split(",")]
+
+                image = directory / f"{name}.jpg"
+                # print(image)
                 if os.path.isfile(image) and os.stat(image).st_size > 0:
                     if self.keep_images_in_ram:
                         image = self.load_and_prepare_image_from_path(image)
@@ -54,8 +57,8 @@ class AutopilotDataset(torch.utils.data.Dataset):
         if not self.keep_images_in_ram:
             image = self.load_and_prepare_image_from_path(image)
         
-        left = float(right)
-        left = float(right)
+        left = float(left)
+        right = float(right)
         
         if self.random_blur and float(np.random.random(1)) > 0.5:
             image = image.filter(ImageFilter.BLUR)
@@ -67,11 +70,11 @@ class AutopilotDataset(torch.utils.data.Dataset):
         
             nb_salt = np.ceil(amount * output.size * 0.5)
             coords = [np.random.randint(0, i - 1, int(nb_salt)) for i in output.shape]
-            output[tuple(coords)] = 1.0
+            output[tuple(coords)] = 255
 
             nb_pepper = np.ceil(amount* output.size * 0.5)
             coords = [np.random.randint(0, i - 1, int(nb_pepper)) for i in output.shape]
-            output[tuple(coords)] = 0.0
+            output[tuple(coords)] = 0
             
             image = PIL.Image.fromarray(output)
         
@@ -90,7 +93,7 @@ class AutopilotDataset(torch.utils.data.Dataset):
         composed_transforms = torchvision.transforms.Compose(transforms)
         image = composed_transforms(image)
         
-        return name, image, torch.Tensor([left, right])
+        return image, torch.Tensor([left, right])
 
     def load_and_prepare_image_from_path(self, path):
         image = cv2.imread(path, cv2.IMREAD_COLOR)

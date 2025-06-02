@@ -33,6 +33,7 @@ from torch.utils.data import DataLoader
 from torchvision import transforms
 from torchvision.models.feature_extraction import create_feature_extractor
 import wandb
+from autopilot_dataset import AutopilotDataset
 
 WANDB_AVAILABLE = True
 
@@ -121,25 +122,37 @@ def get_data_loaders(
 ) -> tuple[DataLoader, DataLoader]:
     """Create `torch.utils.data.DataLoader` objects for training and validation."""
 
-    common_tfms = [
-        transforms.ToTensor(),
-        transforms.Resize((img_size, img_size), antialias=True),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-    ]
+    # common_tfms = [
+    #     transforms.ToTensor(),
+    #     transforms.Resize((img_size, img_size), antialias=True),
+    #     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    # ]
 
-    train_tfms = transforms.Compose(
-        [
-            transforms.RandomApply(
-                [transforms.ColorJitter(brightness=0.3)],
-                p=0.3,              
-            ),
-            *common_tfms,
-        ]
-    )
-    val_tfms = transforms.Compose(common_tfms)
+    # train_tfms = transforms.Compose(
+    #     [
+    #         transforms.RandomApply(
+    #             [transforms.ColorJitter(brightness=0.3)],
+    #             p=0.3,              
+    #         ),
+    #         *common_tfms,
+    #     ]
+    # )
+    # val_tfms = transforms.Compose(common_tfms)
 
-    train_ds = torchvision.datasets.ImageFolder(train_dir, transform=train_tfms)
-    val_ds = torchvision.datasets.ImageFolder(val_dir, transform=val_tfms)
+    train_ds = AutopilotDataset(train_dir,
+                                img_size,
+                                random_horizontal_flip=False,
+                                random_noise=True,
+                                random_blur=True,
+                                random_color_jitter=True,
+                                keep_images_in_ram=True)   
+    val_ds  =  AutopilotDataset(val_dir,
+                                img_size,
+                                random_horizontal_flip=False,
+                                random_noise=False,
+                                random_blur=False,
+                                random_color_jitter=False,
+                                keep_images_in_ram=True)
 
     train_loader = DataLoader(
         train_ds,
@@ -223,7 +236,7 @@ def main() -> None:  # noqa: C901
 
     # Training params
     parser.add_argument("--epochs", type=int, default=50)
-    parser.add_argument("--batch_size", type=int, default=128)
+    parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight_decay", type=float, default=1e-4)
 
@@ -302,8 +315,8 @@ def main() -> None:  # noqa: C901
             epochs_without_improvement = 0
             ckpt_path = Path("best_model.pt")
             torch.save(model.state_dict(), ckpt_path)
-            if WANDB_AVAILABLE:
-                wandb.save(str(ckpt_path))
+            # if WANDB_AVAILABLE:
+                # wandb.save(str(ckpt_path))
             print(f"[INFO] New best – model saved to {ckpt_path}.")
         else:
             epochs_without_improvement += 1

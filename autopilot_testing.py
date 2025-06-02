@@ -13,16 +13,16 @@ from autopilot_utils import preprocess_image, center_crop_square
 from autopilot_model import AutopilotModel
 
 # TODO: set your paths
-MODELS_DIR = ""
+MODELS_DIR = "/home/jeong/gitclone/E2E_jetson/checkpoint/best_model.pt"
 NAME = ""
-MODEL_PATH = MODELS_DIR + NAME + ".pth"
+MODEL_PATH = MODELS_DIR + NAME + ".pt"
 MODEL_PATH_TRT = MODELS_DIR + NAME + "_trt.pth"
 
 STEERING_OFFSET = 0.035
 THROTTLE_GAIN = 0.8
 
-CAMERA_WIDTH = 448
-CAMERA_HEIGHT = 336
+CAMERA_WIDTH = 960
+CAMERA_HEIGHT = 540
 
 FRAME_SIZE = 224
 FRAME_CHANNELS = 3
