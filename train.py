@@ -35,7 +35,7 @@ from torchvision.models.feature_extraction import create_feature_extractor
 import wandb
 from autopilot_dataset import AutopilotDataset
 
-WANDB_AVAILABLE = True
+WANDB_AVAILABLE = False
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Autopilot model
@@ -78,7 +78,7 @@ class AutopilotModel(nn.Module):
         )
 
         # Feature‑extractor is **created lazily** the first time it is needed.
-        self._feature_extractor: nn.Module | None = None
+        # self._feature_extractor: nn.Module | None = None
 
     # --------------------------------------------------------------------- #
     #  Forward                                                                #
@@ -90,24 +90,24 @@ class AutopilotModel(nn.Module):
     # --------------------------------------------------------------------- #
     #  Lazy feature extractor                                               #
     # --------------------------------------------------------------------- #
-    def extract_intermediate_features(
-        self, x: torch.Tensor
-    ) -> Dict[str, torch.Tensor]:
+    # def extract_intermediate_features(
+    #     self, x: torch.Tensor
+    # ) -> Dict[str, torch.Tensor]:
         """Return layer1 and layer2 feature tensors (eval‑only).
 
         This method **never** runs during `.train()` – call it from a validation
         loop with `torch.no_grad()` instead.
         """
-        if self.training:
-            raise RuntimeError("`extract_intermediate_features` called in train mode")
+        # if self.training:
+        #     raise RuntimeError("`extract_intermediate_features` called in train mode")
 
-        if self._feature_extractor is None:
-            self._feature_extractor = create_feature_extractor(
-                self.backbone, return_nodes={"layer1": "feat1", "layer2": "feat2"}
-            )
-            self._feature_extractor.eval()
+        # if self._feature_extractor is None:
+        #     self._feature_extractor = create_feature_extractor(
+        #         self.backbone, return_nodes={"layer1": "feat1", "layer2": "feat2"}
+        #     )
+        #     self._feature_extractor.eval()
 
-        return self._feature_extractor(x)
+        # return self._feature_extractor(x)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -214,11 +214,11 @@ def evaluate(
         outputs = model(imgs)
         val_loss += criterion(outputs, targets).item() * imgs.size(0)
 
-        if log_features and WANDB_AVAILABLE:
-            feats = model.extract_intermediate_features(imgs)
-            # Log layer statistics as histograms (one batch per epoch for brevity)
-            wandb.log({name: wandb.Histogram(t.cpu().flatten()) for name, t in feats.items()})
-            log_features = False  # only log once per epoch to reduce overhead
+        # if log_features and WANDB_AVAILABLE:
+        #     feats = model.extract_intermediate_features(imgs)
+        #     # Log layer statistics as histograms (one batch per epoch for brevity)
+        #     wandb.log({name: wandb.Histogram(t.cpu().flatten()) for name, t in feats.items()})
+        #     log_features = False  # only log once per epoch to reduce overhead
 
     return val_loss / len(loader.dataset)
 
@@ -255,11 +255,11 @@ def main() -> None:  # noqa: C901
     os.environ.setdefault("CUDA_VISIBLE_DEVICES", "0")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"[INFO] Training on {device} …")
+    print(f"[INFO] Training on {device}")
 
     # W&B
     if WANDB_AVAILABLE:
-        wandb.init(project=args.wandb_project, config=vars(args), save_code=True)
+        wandb.init(project=args.wandb_project, config=vars(args), save_code=False)
 
     # Data
     train_loader, val_loader = get_data_loaders(
