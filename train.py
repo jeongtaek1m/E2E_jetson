@@ -231,18 +231,16 @@ def main() -> None:  # noqa: C901
     root_dir = Path("./datasets")
     # Data
     parser.add_argument("--train_dir", type=Path, default=root_dir / "train")
-
     parser.add_argument("--val_dir", type=Path, default=root_dir / "valid")
 
     # Training params
-    parser.add_argument("--epochs", type=int, default=50)
+    parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight_decay", type=float, default=1e-4)
 
     # Model & logging
     parser.add_argument("--output_size", type=int, default=2, help="Size of the final output vector (e.g., 2‑DOF)")
-
     parser.add_argument("--dropout", type=float, default=0.3)
     parser.add_argument("--no_pretrained", action="store_true", help="Disable ImageNet weights")
 
@@ -284,8 +282,6 @@ def main() -> None:  # noqa: C901
     )
 
     best_val_loss = float("inf")
-    epochs_without_improvement = 0
-    PATIENCE = 10
 
     # ───────────────────────────────────────
     #  Training loop
@@ -312,17 +308,14 @@ def main() -> None:  # noqa: C901
         # Early stopping
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-            epochs_without_improvement = 0
-            ckpt_path = Path("best_model.pt")
+            ckpt_path = Path("best_model_cnn.pt")
             torch.save(model.state_dict(), ckpt_path)
             # if WANDB_AVAILABLE:
                 # wandb.save(str(ckpt_path))
             print(f"[INFO] New best – model saved to {ckpt_path}.")
-        else:
-            epochs_without_improvement += 1
-            if epochs_without_improvement >= PATIENCE:
-                print("[INFO] Early stopping: no improvement.")
-                break
+
+    ckpt_path = Path("last_model_cnn.pt")
+    torch.save(model.state_dict(),ckpt_path)
 
     if WANDB_AVAILABLE:
         wandb.finish()

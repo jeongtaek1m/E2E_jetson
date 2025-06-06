@@ -9,11 +9,8 @@ import torch
 import torchvision.transforms as T
 from PIL import Image, ImageFilter
 from torch.utils.data import Dataset
-
-# If you need square‑center cropping, leave the import; otherwise comment out.
-from autopilot_utils import center_crop_square  # noqa: F401  (optional)
-
-
+from typing import List, Tuple
+from typing import Union
 class AutopilotDataset(Dataset):
     """Simple (image, action) dataset for end‑to‑end driving.
 
@@ -39,6 +36,7 @@ class AutopilotDataset(Dataset):
         random_horizontal_flip: bool = False,
         random_color_jitter: bool = False,
         keep_images_in_ram: bool = False,
+        use_rnn: bool = False,
     ) -> None:
         super().__init__()
 
@@ -49,6 +47,7 @@ class AutopilotDataset(Dataset):
         self.random_blur = random_blur
         self.random_horizontal_flip = random_horizontal_flip
         self.keep_images_in_ram = keep_images_in_ram
+        self.use_rnn = use_rnn
 
         # ------------------------------------------------------------------
         #  Random transforms configured once here, re‑used in __getitem__.
@@ -71,32 +70,72 @@ class AutopilotDataset(Dataset):
         #  Build in‑memory index  ▸  self.samples = List[(name, img_or_path, l, r)]
         # ------------------------------------------------------------------
         self.samples: List[Tuple[str, str | Image.Image, float, float]] = []
-        ann_path = self.root / "annotations.csv"
-        with ann_path.open() as fh:
-            for line in fh:
-                name, left, right = (f.strip() for f in line.split(","))
-                img_path = self.root / f"{name}.jpg"
-                if not img_path.is_file() or img_path.stat().st_size == 0:
-                    continue  # skip missing / empty files
+        if use_rnn:
+            ann_path = self.root / "annotations_with_prev10.csv"
+            if not ann_path.is_file():
+                raise FileNotFoundError(f"RNN annotations file not found: {ann_path}")
 
-                record_img: str | Image.Image
-                if keep_images_in_ram:
-                    record_img = self._load_pil(img_path)
-                else:
-                    record_img = str(img_path)
+            with ann_path.open() as fh:
+                for line in fh:
+                    parts = [f.strip() for f in line.split(",")]
+                    # parts: [frame_name, prev_left10, prev_right10, ..., prev_left1, prev_right1, current_left, current_right]
+                    name = parts[0]
+                    img_path = self.root / f"{name}.jpg"
+                    if not img_path.is_file() or img_path.stat().st_size == 0:
+                        continue
 
-                self.samples.append((name, record_img, float(left), float(right)))
+                    # 20개 이전 속도 값 파싱
+                    prev_seq: List[List[float]] = []
+                    for idx in range(1, 21, 2):
+                        left_val = float(parts[idx])
+                        right_val = float(parts[idx + 1])
+                        prev_seq.append([left_val, right_val])
+                    # 이제 prev_seq = [[prev_left10, prev_right10], ..., [prev_left1, prev_right1]]
+
+                    current_left = float(parts[21])
+                    current_right = float(parts[22])
+
+                    record_img: str | Image.Image
+                    if keep_images_in_ram:
+                        record_img = Image.open(img_path).convert("RGB")
+                    else:
+                        record_img = str(img_path)
+
+                    self.samples.append((name, record_img, prev_seq, current_left, current_right))
+
+
+        else:
+            ann_path = self.root / "annotations.csv"
+            with ann_path.open() as fh:
+                for line in fh:
+                    name, left, right = (f.strip() for f in line.split(","))
+                    img_path = self.root / f"{name}.jpg"
+                    if not img_path.is_file() or img_path.stat().st_size == 0:
+                        continue  # skip missing / empty files
+
+                    record_img: str | Image.Image
+                    if keep_images_in_ram:
+                        record_img = self._load_pil(img_path)
+                    else:
+                        record_img = str(img_path)
+
+                    self.samples.append((name, record_img, float(left), float(right)))
 
         print(f"Loaded {len(self.samples):,} samples from {self.root}")
 
-    # ------------------------------------------------------------------
+    # ---------------------------------------   ---------------------------
     #  Dataset protocol
     # ------------------------------------------------------------------
     def __len__(self) -> int:  # noqa: D401
         return len(self.samples)
 
-    def __getitem__(self, index: int) -> Tuple[torch.Tensor, torch.Tensor]:
-        name, img_or_path, left, right = self.samples[index]
+    def __getitem__(self, index: int) -> Union[
+        Tuple[torch.Tensor, torch.Tensor],
+        Tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+    ]:
+        item = self.samples[index]
+        name = item[0]
+        img_or_path = item[1]
 
         # Lazily load if not pre‑cached
         img: Image.Image = img_or_path if isinstance(img_or_path, Image.Image) else self._load_pil(img_or_path)
@@ -124,8 +163,18 @@ class AutopilotDataset(Dataset):
 
         # Final tensor conversion
         img_tensor = self.to_tensor(img)
-        label_tensor = torch.tensor([left, right], dtype=torch.float32)
-        return img_tensor, label_tensor
+        if not self.use_rnn:
+            # item = (name, img_or_path, left, right)
+            left, right = item[2], item[3]
+            target = torch.tensor([left, right], dtype=torch.float32)
+            return img_tensor, target
+        else:
+            # item = (name, img_or_path, prev_seq, current_left, current_right)
+            prev_seq, current_left, current_right = item[2], item[3], item[4]
+            speed_seq = torch.tensor(prev_seq, dtype=torch.float32)  # shape = (10, 2)
+            target = torch.tensor([current_left, current_right], dtype=torch.float32)
+            return img_tensor, speed_seq, target
+
 
     # ------------------------------------------------------------------
     #  Helper utilities
