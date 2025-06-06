@@ -131,7 +131,7 @@ dmypy.json
 /wandb
 /checkpoint
 /datasets
-.pt
+*.pt
 .zip
 __pycache__
 datasets/
