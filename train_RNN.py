@@ -24,8 +24,8 @@ from autopilot_dataset import AutopilotDataset
 # 아래쪽에서 import하는 이름을 E2E_CRNN으로 바꾸든지, 
 # AutopilotModel로 바꾸든 하나로 맞춰야 합니다.
 from autopilot_model import E2E_CRNN  
-
-WANDB_AVAILABLE = False
+import numpy as np
+WANDB_AVAILABLE = True
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Utility helpers
@@ -125,10 +125,6 @@ def evaluate(
         outputs = model(imgs, speed_seqs)
         val_loss += criterion(outputs, targets).item() * imgs.size(0)
 
-        # if log_features and WANDB_AVAILABLE:
-        #     feats = model.extract_intermediate_features(imgs)
-        #     wandb.log({name: wandb.Histogram(t.cpu().flatten()) for name, t in feats.items()})
-        #     log_features = False
 
     return val_loss / len(loader.dataset)
 
@@ -145,7 +141,7 @@ def main() -> None:
 
     # Training params
     parser.add_argument("--epochs",       type=int,   default=100)
-    parser.add_argument("--batch_size",   type=int,   default=64)
+    parser.add_argument("--batch_size",   type=int,   default=128)
     parser.add_argument("--lr",           type=float, default=1e-3)
     parser.add_argument("--weight_decay", type=float, default=1e-4)
 
@@ -158,6 +154,9 @@ def main() -> None:
 
     parser.add_argument("--wandb_project", type=str, default="autopilot-e2e",
                         help="W&B project name")
+    parser.add_argument("--freeze_front", action="store_true", help="Freeze the backbone layers")
+    parser.add_argument("--resume_checkpoint", type=Path, default="./checkpoint/last_model_rnn.pt",
+                        help="불러올 체크포인트(.pt) 경로")
 
     args = parser.parse_args()
 
@@ -184,13 +183,30 @@ def main() -> None:
         output_size=args.output_size,
         dropout_prob=args.dropout,
         pretrained=not args.no_pretrained,
+        freeze_front=args.freeze_front,
     ).to(device)
     print(f"[INFO] Model: {model.__class__.__name__}")
 
+
+    if args.freeze_front and args.resume_checkpoint is not None and args.resume_checkpoint.exists():
+        print(f"[INFO] Loading pretrained weights from {args.resume_checkpoint}")
+        state = torch.load(args.resume_checkpoint, weights_only = True)
+        model.load_state_dict(state, strict=False)
+
+
     criterion = nn.MSELoss()
-    optimizer = torch.optim.AdamW(
+
+    if args.freeze_front:
+        optimizer = torch.optim.AdamW(
+        filter(lambda p: p.requires_grad, model.parameters()),
+        lr=args.lr,
+        weight_decay=args.weight_decay
+        )
+    else:
+        optimizer = torch.optim.AdamW(
         model.parameters(), lr=args.lr, weight_decay=args.weight_decay
-    )
+        )
+    
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="min", factor=0.5, patience=5, verbose=True
     )
@@ -213,14 +229,9 @@ def main() -> None:
                 "lr":         optimizer.param_groups[0]["lr"],
             })
 
-        print(f"[Epoch {epoch:03d}/{args.epochs}]  Train: {train_loss:.4f} | Val: {val_loss:.4f}")
-
-        # Checkpoint 저장
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            ckpt_path = Path("best_model_rnn.pt")
-            torch.save(model.state_dict(), ckpt_path)
-            print(f"[INFO] New best – model saved to {ckpt_path}.")
+        print(f"[Epoch {epoch:03d}/{args.epochs}]  Train: {train_loss:.7f} | Val: {val_loss:.7f}")
+        ckpt_path = Path("epoch_model_rnn.pt")
+        torch.save(model.state_dict(),ckpt_path)
 
     ckpt_path = Path("last_model_rnn.pt")
     torch.save(model.state_dict(), ckpt_path)

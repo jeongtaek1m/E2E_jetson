@@ -34,85 +34,11 @@ from torchvision import transforms
 from torchvision.models.feature_extraction import create_feature_extractor
 import wandb
 from autopilot_dataset import AutopilotDataset
+from autopilot_model import E2E_CNN
 
-WANDB_AVAILABLE = False
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  Autopilot model
-# ─────────────────────────────────────────────────────────────────────────────
-class AutopilotModel(nn.Module):
-    """ResNet‑18 backbone with a small MLP head.
-
-    Parameters
-    ----------
-    output_size : int
-        Dimension of the final regression output (e.g. 2 for *steer*, *throttle*).
-    dropout_prob : float, optional
-        Dropout probability applied between the fully‑connected layers.
-    pretrained : bool, optional
-        If *True*, load ImageNet‑1K weights for the backbone.
-    """
-
-    def __init__(
-        self,
-        output_size: int = 2,
-        dropout_prob: float = 0.3,
-        pretrained: bool = True,
-    ) -> None:
-        super().__init__()
-
-        self.backbone = torchvision.models.resnet18(
-            weights="IMAGENET1K_V1" if pretrained else None
-        )
-
-        in_features = self.backbone.fc.in_features
-        self.backbone.fc = nn.Sequential(
-            nn.Dropout(dropout_prob),
-            nn.Linear(in_features, 128),
-            nn.ReLU(inplace=True),
-            nn.Dropout(dropout_prob),
-            nn.Linear(128, 64),
-            nn.ReLU(inplace=True),
-            nn.Dropout(dropout_prob),
-            nn.Linear(64, output_size),
-        )
-
-        # Feature‑extractor is **created lazily** the first time it is needed.
-        # self._feature_extractor: nn.Module | None = None
-
-    # --------------------------------------------------------------------- #
-    #  Forward                                                                #
-    # --------------------------------------------------------------------- #
-    def forward(self, x: torch.Tensor) -> torch.Tensor:  # noqa: D401
-        """Inference – maps an RGB image tensor to actuator commands."""
-        return self.backbone(x)
-
-    # --------------------------------------------------------------------- #
-    #  Lazy feature extractor                                               #
-    # --------------------------------------------------------------------- #
-    # def extract_intermediate_features(
-    #     self, x: torch.Tensor
-    # ) -> Dict[str, torch.Tensor]:
-        """Return layer1 and layer2 feature tensors (eval‑only).
-
-        This method **never** runs during `.train()` – call it from a validation
-        loop with `torch.no_grad()` instead.
-        """
-        # if self.training:
-        #     raise RuntimeError("`extract_intermediate_features` called in train mode")
-
-        # if self._feature_extractor is None:
-        #     self._feature_extractor = create_feature_extractor(
-        #         self.backbone, return_nodes={"layer1": "feat1", "layer2": "feat2"}
-        #     )
-        #     self._feature_extractor.eval()
-
-        # return self._feature_extractor(x)
+WANDB_AVAILABLE = True
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  Utility helpers
-# ─────────────────────────────────────────────────────────────────────────────
 def get_data_loaders(
     train_dir: Path,
     val_dir: Path,
@@ -199,7 +125,7 @@ def train_one_epoch(
 
 @torch.no_grad()
 def evaluate(
-    model: AutopilotModel,
+    model: E2E_CNN,
     loader: DataLoader,
     criterion: nn.Module,
     device: torch.device,
@@ -235,7 +161,7 @@ def main() -> None:  # noqa: C901
 
     # Training params
     parser.add_argument("--epochs", type=int, default=100)
-    parser.add_argument("--batch_size", type=int, default=64)
+    parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight_decay", type=float, default=1e-4)
 
@@ -245,6 +171,10 @@ def main() -> None:  # noqa: C901
     parser.add_argument("--no_pretrained", action="store_true", help="Disable ImageNet weights")
 
     parser.add_argument("--wandb_project", type=str, default="autopilot-e2e", help="W&B project name")
+    parser.add_argument("--freeze_front", action="store_true", help="Freeze the backbone layers")
+    parser.add_argument("--resume_checkpoint", type=Path, default="./checkpoint/last_model_cnn.pt",
+                        help="불러올 체크포인트(.pt) 경로")
+
 
     args = parser.parse_args()
 
@@ -267,16 +197,32 @@ def main() -> None:  # noqa: C901
     )
 
     # Model, criterion, optimizer
-    model = AutopilotModel(
+    model = E2E_CNN(
         output_size=args.output_size,
         dropout_prob=args.dropout,
         pretrained=not args.no_pretrained,
+        freeze_front=args.freeze_front,
     ).to(device)
+    print(f"[INFO] Model: {model.__class__.__name__}")
+
+    if args.freeze_front and args.resume_checkpoint is not None and args.resume_checkpoint.exists():
+        print(f"[INFO] Loading pretrained weights from {args.resume_checkpoint}")
+        state = torch.load(args.resume_checkpoint, weights_only = True)
+        model.load_state_dict(state, strict=False)
+
 
     criterion = nn.MSELoss()
-    optimizer = torch.optim.AdamW(
+    if args.freeze_front:
+        optimizer = torch.optim.AdamW(
+        filter(lambda p: p.requires_grad, model.parameters()),
+        lr=args.lr,
+        weight_decay=args.weight_decay
+        )
+    else:
+        optimizer = torch.optim.AdamW(
         model.parameters(), lr=args.lr, weight_decay=args.weight_decay
-    )
+        )
+    
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="min", factor=0.5, patience=5, verbose=True
     )
@@ -302,20 +248,10 @@ def main() -> None:  # noqa: C901
             )
 
         print(
-            f"[Epoch {epoch:03d}/{args.epochs}]  Train: {train_loss:.4f} | Val: {val_loss:.4f}"
+            f"[Epoch {epoch:03d}/{args.epochs}]  Train: {train_loss:.7f} | Val: {val_loss:.7f}"
         )
-
-        # Early stopping
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            ckpt_path = Path("best_model_cnn.pt")
-            torch.save(model.state_dict(), ckpt_path)
-            # if WANDB_AVAILABLE:
-                # wandb.save(str(ckpt_path))
-            print(f"[INFO] New best – model saved to {ckpt_path}.")
-
-    ckpt_path = Path("last_model_cnn.pt")
-    torch.save(model.state_dict(),ckpt_path)
+        ckpt_path = Path("epoch_model_cnn.pt")
+        torch.save(model.state_dict(),ckpt_path)
 
     if WANDB_AVAILABLE:
         wandb.finish()
